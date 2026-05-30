@@ -8,6 +8,7 @@ class SerialConnection {
     this.onDisconnectCallback = null;
     this.readPromise = null;
     this.writeMutex = Promise.resolve();
+    this.okPromiseResolve = null; // For ping-pong queue blocking
     this.listeners = [];
     this.isHalted = false;
   }
@@ -133,18 +134,32 @@ class SerialConnection {
       return;
     }
 
-    // Queue writes to prevent overlapping
-    this.writeMutex = this.writeMutex.then(async () => {
-      try {
-        const encoder = new TextEncoder();
-        // Marlin uses \n or \r\n
-        await this.writer.write(encoder.encode(data + '\n'));
-      } catch (err) {
-        console.error("Error writing to serial port:", err);
-      }
+    // Queue writes to prevent overlapping and wait for 'ok' (Ping-Pong)
+    const p = new Promise(resolveQueue => {
+      this.writeMutex = this.writeMutex.then(async () => {
+        try {
+          const encoder = new TextEncoder();
+          
+          // Create the Promise that readLoop will resolve when 'ok' is received
+          const waitForOk = new Promise(r => { this.okPromiseResolve = r; });
+          
+          // Marlin uses \n or \r\n
+          await this.writer.write(encoder.encode(data + '\n'));
+          
+          // Wait for the 'ok' response or a 30 second timeout
+          await Promise.race([
+            waitForOk,
+            new Promise(r => setTimeout(r, 30000))
+          ]);
+          
+        } catch (err) {
+          console.error("Error writing to serial port:", err);
+        }
+        resolveQueue();
+      });
     });
     
-    return this.writeMutex;
+    return p;
   }
 
   async emergencyStop() {
@@ -153,6 +168,12 @@ class SerialConnection {
     
     // Break the current software queue chain
     this.writeMutex = Promise.resolve();
+    
+    // Unblock any pending queue waits
+    if (this.okPromiseResolve) {
+      this.okPromiseResolve();
+      this.okPromiseResolve = null;
+    }
 
     if (!this.port || !this.port.writable || !this.writer) {
       return;
@@ -189,6 +210,15 @@ class SerialConnection {
               
               if (this.onDataCallback) {
                 this.onDataCallback(line);
+              }
+
+              // Detect 'ok' or error lines to unblock the write queue
+              const lowerLine = line.toLowerCase();
+              if (lowerLine.startsWith('ok') || lowerLine.startsWith('error') || lowerLine.includes('resend')) {
+                if (this.okPromiseResolve) {
+                  this.okPromiseResolve();
+                  this.okPromiseResolve = null;
+                }
               }
 
               // Parse Marlin M114 Position Response

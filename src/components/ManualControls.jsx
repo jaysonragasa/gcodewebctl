@@ -14,7 +14,9 @@ export default function ManualControls() {
     // Relative positioning
     await sendGCode('G91');
     const move = dir > 0 ? distance : -distance;
-    await sendGCode(`G1 ${axis}${move} F${feedrate}`);
+    // Use a much slower feedrate for the Extruder to prevent motor skipping/stripping filament
+    const currentFeedrate = axis === 'E' ? Math.min(feedrate, 300) : feedrate;
+    await sendGCode(`G1 ${axis}${move} F${currentFeedrate}`);
     // Absolute positioning back
     await sendGCode('G90');
     // Auto-update position in UI
@@ -98,6 +100,25 @@ export default function ManualControls() {
         </div>
       </div>
       
+      {/* Extruder Controls */}
+      <div className="flex items-center justify-between mb-6 bg-background/50 p-2 rounded border border-slate-700/50">
+        <span className="text-xs font-bold text-textMuted uppercase tracking-wider w-16 text-center">Extruder</span>
+        <div className="flex space-x-2 flex-1 ml-2">
+          <button 
+            onClick={() => handleJog('E', -1)} 
+            className="flex-1 py-2 rounded bg-slate-700 hover:bg-slate-600 text-xs font-bold transition-colors shadow-sm"
+          >
+            Retract
+          </button>
+          <button 
+            onClick={() => handleJog('E', 1)} 
+            className="flex-1 py-2 rounded bg-slate-700 hover:bg-slate-600 text-xs font-bold transition-colors shadow-sm text-primary"
+          >
+            Extrude
+          </button>
+        </div>
+      </div>
+
       <div className="flex space-x-2">
         <button onClick={() => sendGCode('M18')} className="flex-1 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-xs font-medium transition-colors">
           Motors Off
