@@ -5,6 +5,7 @@ import TemperatureControls from './components/TemperatureControls';
 import TerminalAndTools from './components/TerminalAndTools';
 import VirtualPlate from './components/VirtualPlate';
 import ImageToGcode from './components/ImageToGcode';
+import ShapeDrawer from './components/ShapeDrawer';
 import { serialConnection } from './utils/SerialConnection';
 
 function App() {
@@ -33,7 +34,7 @@ function App() {
   return (
     <div className="flex h-screen bg-background text-textMain overflow-hidden font-sans">
       {/* Sidebar for Controls */}
-      <div className="w-80 border-r border-slate-800 bg-surface/50 flex flex-col overflow-y-auto z-10 shadow-xl">
+      <div className="w-[420px] flex-shrink-0 border-r border-slate-800 bg-surface/50 flex flex-col overflow-y-auto z-10 shadow-xl">
         <div className="p-4 flex-shrink-0">
           <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary mb-1">
             GCode WebControl
@@ -56,24 +57,32 @@ function App() {
             className={`flex-1 py-1.5 text-sm font-medium rounded transition-colors ${activeTab === 'draw' ? 'bg-primary text-white shadow-md' : 'text-textMuted hover:bg-surface'}`}
             onClick={() => setActiveTab('draw')}
           >
-            Pen Plotter
+            Image Plotter
+          </button>
+          <button 
+            className={`flex-1 py-1.5 text-sm font-medium rounded transition-colors ${activeTab === 'shape' ? 'bg-primary text-white shadow-md' : 'text-textMuted hover:bg-surface'}`}
+            onClick={() => setActiveTab('shape')}
+          >
+            Shape Drawer
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {activeTab === 'printer' && (
-            <>
-              {isConnected && (
-                <TemperatureControls temps={temps} fanSpeed={fanSpeed} setFanSpeed={setFanSpeed} />
-              )}
-              <ManualControls />
-              <TerminalAndTools />
-            </>
-          )}
+        <div className="flex-1 overflow-y-auto p-4">
+          <div className={`space-y-4 ${activeTab === 'printer' ? 'block' : 'hidden'}`}>
+            {isConnected && (
+              <TemperatureControls temps={temps} fanSpeed={fanSpeed} setFanSpeed={setFanSpeed} />
+            )}
+            <ManualControls />
+            <TerminalAndTools />
+          </div>
           
-          {activeTab === 'draw' && (
+          <div className={`h-full ${activeTab === 'draw' ? 'block' : 'hidden'}`}>
             <ImageToGcode />
-          )}
+          </div>
+          
+          <div className={`h-full ${activeTab === 'shape' ? 'block' : 'hidden'}`}>
+            <ShapeDrawer />
+          </div>
         </div>
       </div>
 

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { serialConnection } from '../utils/SerialConnection';
-import { Upload, Play, Settings2, Image as ImageIcon } from 'lucide-react';
+import { Upload, Play, Square, Settings2, Image as ImageIcon, Repeat } from 'lucide-react';
 
 export default function ImageToGcode() {
   const [image, setImage] = useState(null);
@@ -16,8 +16,14 @@ export default function ImageToGcode() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
   
+  const [homeZ, setHomeZ] = useState(true);
+  const [isInfinite, setIsInfinite] = useState(false);
+  const [repetitions, setRepetitions] = useState(1);
+  const [currentRep, setCurrentRep] = useState(0);
+  
   const canvasRef = useRef(null);
   const imgRef = useRef(null);
+  const cancelRef = useRef(false);
 
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
@@ -110,6 +116,8 @@ export default function ImageToGcode() {
     if (!canvasRef.current || isGenerating) return;
     setIsGenerating(true);
     setProgress(0);
+    setCurrentRep(0);
+    cancelRef.current = false;
     
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -164,49 +172,76 @@ export default function ImageToGcode() {
       }
     }
 
-    let gcode = [
-      `G28 ; Home All Axes`,
-      `M400 ; Wait for homing to finish`,
-      `G90 ; Absolute positioning`,
-      `G0 Z${zLift} F1000 ; Lift Z safely`,
-    ];
+    let repCount = 0;
+    while (!cancelRef.current && (isInfinite || repCount < repetitions)) {
+      setCurrentRep(repCount + 1);
+      
+      let gcode = [];
+      if (repCount === 0) {
+        if (homeZ) {
+          gcode.push(`G28 ; Home All Axes`);
+        } else {
+          gcode.push(`G28 X Y ; Home X and Y only`);
+        }
+        gcode.push(`M400 ; Wait for homing to finish`);
+      }
+      gcode.push(`G90 ; Absolute positioning`);
+      gcode.push(`G0 Z${zLift} F1000 ; Lift Z safely`);
 
-    paths.forEach(path => {
-      // Move to start of path (Pen Up)
-      const startPx = (path[0].x * pixelSize).toFixed(2);
-      const startPy = ((h - path[0].y) * pixelSize).toFixed(2);
-      gcode.push(`G0 X${startPx} Y${startPy} F4000`);
+      paths.forEach(path => {
+        // Move to start of path (Pen Up)
+        const startPx = (path[0].x * pixelSize).toFixed(2);
+        const startPy = ((h - path[0].y) * pixelSize).toFixed(2);
+        gcode.push(`G0 X${startPx} Y${startPy} F4000`);
+        
+        // Pen Down
+        gcode.push(`G1 Z${zDraw} F1000`);
+        
+        // Draw continuous path
+        for (let i = 1; i < path.length; i++) {
+          const px = (path[i].x * pixelSize).toFixed(2);
+          const py = ((h - path[i].y) * pixelSize).toFixed(2);
+          gcode.push(`G1 X${px} Y${py} F${feedrate}`);
+        }
+        
+        // Pen Up
+        gcode.push(`G0 Z${zLift} F1000`);
+      });
       
-      // Pen Down
-      gcode.push(`G1 Z${zDraw} F1000`);
-      
-      // Draw continuous path
-      for (let i = 1; i < path.length; i++) {
-        const px = (path[i].x * pixelSize).toFixed(2);
-        const py = ((h - path[i].y) * pixelSize).toFixed(2);
-        gcode.push(`G1 X${px} Y${py} F${feedrate}`);
+      if (!isInfinite && repCount === repetitions - 1) {
+        gcode.push(`G0 X0 Y0 F4000 ; Return Home`);
       }
       
-      // Pen Up
-      gcode.push(`G0 Z${zLift} F1000`);
-    });
-    
-    gcode.push(`G0 X0 Y0 F4000 ; Return Home`);
-    
-    // Send to printer via serial queue
-    const totalLines = gcode.length;
-    for (let i = 0; i < totalLines; i++) {
-      await serialConnection.write(gcode[i]);
-      if (i % 20 === 0) {
-        setProgress(Math.round((i / totalLines) * 100));
-        await new Promise(r => setTimeout(r, 5)); // let UI update
+      // Send to printer via serial queue
+      const totalLines = gcode.length;
+      for (let i = 0; i < totalLines; i++) {
+        if (cancelRef.current) {
+          await serialConnection.write(`G0 Z${zLift} F1000 ; Lift Pen (Cancelled)`);
+          await serialConnection.write(`G0 X0 Y0 F4000 ; Return Home (Cancelled)`);
+          break;
+        }
+        await serialConnection.write(gcode[i]);
+        if (i % 20 === 0) {
+          setProgress(Math.round((i / totalLines) * 100));
+          await new Promise(r => setTimeout(r, 5)); // let UI update
+        }
+      }
+      
+      if (cancelRef.current) break;
+      
+      setProgress(100);
+      repCount++;
+      
+      if (!cancelRef.current && (isInfinite || repCount < repetitions)) {
+        await new Promise(r => setTimeout(r, 1000)); // Pause between reps
+        setProgress(0);
       }
     }
     
-    setProgress(100);
     setTimeout(() => {
       setIsGenerating(false);
       setProgress(0);
+      setCurrentRep(0);
     }, 1000);
   };
 
@@ -283,6 +318,37 @@ export default function ImageToGcode() {
 
               <div className="border-t border-slate-700 my-2 pt-2"></div>
 
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold text-textMuted uppercase flex items-center">
+                  <Repeat size={12} className="mr-1" /> Plot Loop Settings
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-3 mb-2">
+                <label className="flex items-center space-x-2 text-xs text-textMuted cursor-pointer bg-background p-2 rounded border border-slate-700 hover:bg-slate-800 transition-colors">
+                  <input type="checkbox" checked={homeZ} onChange={e => setHomeZ(e.target.checked)} className="rounded bg-slate-800 border-slate-600 text-primary focus:ring-primary" />
+                  <span>Home Z Axis</span>
+                </label>
+                <label className="flex items-center space-x-2 text-xs text-textMuted cursor-pointer bg-background p-2 rounded border border-slate-700 hover:bg-slate-800 transition-colors">
+                  <input type="checkbox" checked={isInfinite} onChange={e => setIsInfinite(e.target.checked)} className="rounded bg-slate-800 border-slate-600 text-primary focus:ring-primary" />
+                  <span>Infinite Loop</span>
+                </label>
+              </div>
+              {!isInfinite && (
+                <div>
+                  <label className="flex justify-between text-[10px] text-textMuted mb-1 font-bold">
+                    <span>Repetitions</span>
+                    <span>{repetitions}</span>
+                  </label>
+                  <input 
+                    type="range" min="1" max="50" value={repetitions} 
+                    onChange={(e) => setRepetitions(Number(e.target.value))}
+                    className="w-full accent-primary"
+                  />
+                </div>
+              )}
+
+              <div className="border-t border-slate-700 my-2 pt-2"></div>
+
               <div>
                 <label className="flex justify-between text-xs text-textMuted mb-1">
                   <span>Print Width (mm)</span>
@@ -320,14 +386,23 @@ export default function ImageToGcode() {
               </div>
             </div>
 
-            <button 
-              onClick={generateAndSendGCode}
-              disabled={isGenerating}
-              className="w-full py-2.5 rounded font-bold text-white shadow-lg flex items-center justify-center space-x-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-primary to-secondary hover:from-blue-600 hover:to-emerald-600"
-            >
-              <Play size={18} fill="currentColor" />
-              <span>{isGenerating ? `Plotting Path... ${progress}%` : 'Generate & Draw'}</span>
-            </button>
+            {!isGenerating ? (
+              <button 
+                onClick={generateAndSendGCode}
+                className="w-full py-2.5 rounded font-bold text-white shadow-lg flex items-center justify-center space-x-2 transition-all bg-gradient-to-r from-primary to-secondary hover:from-blue-600 hover:to-emerald-600"
+              >
+                <Play size={18} fill="currentColor" />
+                <span>Generate & Draw</span>
+              </button>
+            ) : (
+              <button 
+                onClick={() => { cancelRef.current = true; }}
+                className="w-full py-2.5 rounded font-bold text-white shadow-lg flex items-center justify-center space-x-2 transition-all bg-red-600 hover:bg-red-500"
+              >
+                <Square size={16} fill="currentColor" />
+                <span>Stop Plotting (Rep {currentRep}{isInfinite ? '' : `/${repetitions}`} - {progress}%)</span>
+              </button>
+            )}
 
             {isGenerating && (
               <div className="w-full bg-surface rounded-full h-1.5 mt-2 overflow-hidden">
