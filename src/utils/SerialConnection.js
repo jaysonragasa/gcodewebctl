@@ -11,6 +11,7 @@ class SerialConnection {
     this.okPromiseResolve = null; // For ping-pong queue blocking
     this.listeners = [];
     this.isHalted = false;
+    this.isPollingActive = false;
   }
 
   addListener(callback) {
@@ -66,7 +67,7 @@ class SerialConnection {
         this.startPolling();   // Fallback to internal software poller
       }, 1000);
       
-      this.notifyListeners({ connected: true });
+      this.notifyListeners({ connected: true, polling: true });
       return true;
     } catch (err) {
       console.error("Connection error:", err);
@@ -77,18 +78,30 @@ class SerialConnection {
 
   startPolling() {
     this.stopPolling(); // ensure no duplicates
+    this.isPollingActive = true;
     this.pollingInterval = setInterval(() => {
       if (!this.port) return;
       // Software polling for Position and Temperature
       this.write('M105');
       this.write('M114');
     }, 2000);
+    this.notifyListeners({ connected: !!this.port, polling: true });
   }
 
   stopPolling() {
+    this.isPollingActive = false;
     if (this.pollingInterval) {
       clearInterval(this.pollingInterval);
       this.pollingInterval = null;
+    }
+    this.notifyListeners({ connected: !!this.port, polling: false });
+  }
+
+  togglePolling() {
+    if (this.isPollingActive) {
+      this.stopPolling();
+    } else {
+      this.startPolling();
     }
   }
 
@@ -116,7 +129,7 @@ class SerialConnection {
       this.port = null;
     }
 
-    this.notifyListeners({ connected: false });
+    this.notifyListeners({ connected: false, polling: false });
 
     if (this.onDisconnectCallback) {
       this.onDisconnectCallback();

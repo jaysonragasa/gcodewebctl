@@ -5,10 +5,18 @@ import { Plug, Unplug, Settings, AlertTriangle } from 'lucide-react';
 export default function ConnectionPanel({ bedSize, setBedSize }) {
   const [isConnected, setIsConnected] = useState(false);
   const [baudRate, setBaudRate] = useState(250000);
+  const [isPolling, setIsPolling] = useState(false);
 
   useEffect(() => {
+    const handleStatus = (status) => {
+      if (status.connected !== undefined) setIsConnected(status.connected);
+      if (status.polling !== undefined) setIsPolling(status.polling);
+    };
+    serialConnection.addListener(handleStatus);
+
     serialConnection.onDisconnectCallback = () => {
       setIsConnected(false);
+      setIsPolling(false);
     };
   }, []);
 
@@ -88,6 +96,22 @@ export default function ConnectionPanel({ bedSize, setBedSize }) {
             </button>
           )}
         </div>
+
+        {isConnected && (
+          <div className="mt-1">
+            <button
+              onClick={() => serialConnection.togglePolling()}
+              className={`w-full py-1.5 rounded text-[10px] font-bold uppercase transition-colors ${
+                isPolling 
+                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md' 
+                  : 'bg-slate-700 hover:bg-slate-600 text-textMuted border border-slate-600'
+              }`}
+              title="Stop background temperature and position requests"
+            >
+              {isPolling ? 'Status Polling: ON' : 'Status Polling: OFF'}
+            </button>
+          </div>
+        )}
 
         {/* Bed Size Settings - Only show when disconnected */}
         {!isConnected && (
